@@ -19,6 +19,9 @@ package org.tribuo.classification.sgd.fm;
 import ai.onnxruntime.OrtEnvironment;
 import ai.onnxruntime.OrtException;
 import ai.onnxruntime.OrtSession;
+import com.oracle.labs.mlrg.olcut.config.ConfigurationData;
+import com.oracle.labs.mlrg.olcut.config.ConfigurationManager;
+import com.oracle.labs.mlrg.olcut.provenance.ProvenanceUtil;
 import com.oracle.labs.mlrg.olcut.util.Pair;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
@@ -34,8 +37,6 @@ import org.tribuo.classification.LabelFactory;
 import org.tribuo.classification.evaluation.LabelEvaluation;
 import org.tribuo.classification.evaluation.LabelEvaluator;
 import org.tribuo.classification.example.LabelledDataGenerator;
-import org.tribuo.classification.sgd.linear.LinearSGDModel;
-import org.tribuo.classification.sgd.linear.TestSGDLinear;
 import org.tribuo.classification.sgd.objectives.Hinge;
 import org.tribuo.common.sgd.AbstractFMTrainer;
 import org.tribuo.common.sgd.AbstractSGDTrainer;
@@ -43,6 +44,7 @@ import org.tribuo.interop.onnx.DenseTransformer;
 import org.tribuo.interop.onnx.LabelTransformer;
 import org.tribuo.interop.onnx.ONNXExternalModel;
 import org.tribuo.math.optimisers.AdaGrad;
+import org.tribuo.provenance.ModelProvenance;
 import org.tribuo.test.Helpers;
 
 import java.io.IOException;
@@ -51,11 +53,15 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 public class TestFMClassification {
@@ -78,10 +84,10 @@ public class TestFMClassification {
         LabelEvaluator e = new LabelEvaluator();
         LabelEvaluation evaluation = e.evaluate(m,p.getB());
         Map<String, List<Pair<String,Double>>> features = m.getTopFeatures(3);
-        Assertions.assertNotNull(features);
+        assertNotNull(features);
         Assertions.assertFalse(features.isEmpty());
         features = m.getTopFeatures(-1);
-        Assertions.assertNotNull(features);
+        assertNotNull(features);
         Assertions.assertFalse(features.isEmpty());
         return m;
     }
@@ -172,6 +178,14 @@ public class TestFMClassification {
                 }
             }
 
+            // Check that the provenance can be extracted and is the same
+            ModelProvenance modelProv = model.getProvenance();
+            Optional<ModelProvenance> optProv = onnxModel.getTribuoProvenance();
+            assertTrue(optProv.isPresent());
+            ModelProvenance onnxProv = optProv.get();
+            assertNotSame(onnxProv, modelProv);
+            assertEquals(modelProv,onnxProv);
+
             onnxModel.close();
         } else {
             logger.warning("ORT based tests only supported on x86_64, found " + arch);
@@ -180,4 +194,18 @@ public class TestFMClassification {
         onnxFile.toFile().delete();
     }
 
+    @Test
+    public void fmRoundTripTest() {
+        Pair<Dataset<Label>,Dataset<Label>> p = LabelledDataGenerator.denseTrainTest();
+        Model<Label> model = testFMClassification(p);
+
+        ConfigurationManager cm = new ConfigurationManager();
+        List<ConfigurationData> provConfig = ProvenanceUtil.extractConfiguration(model.getProvenance());
+        cm.addConfiguration(provConfig);
+
+        FMClassificationTrainer trainer = (FMClassificationTrainer) cm.lookup("fmclassificationtrainer-0");
+        Model<Label> newModel = trainer.train(p.getA());
+
+        assertNotNull(newModel);
+    }
 }

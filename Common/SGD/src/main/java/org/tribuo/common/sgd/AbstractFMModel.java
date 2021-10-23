@@ -31,9 +31,13 @@ import org.tribuo.math.la.SGDVector;
 import org.tribuo.math.la.Tensor;
 import org.tribuo.math.onnx.ONNXMathUtils;
 import org.tribuo.onnx.ONNXContext;
+import org.tribuo.onnx.ONNXExportable;
 import org.tribuo.onnx.ONNXOperators;
 import org.tribuo.provenance.ModelProvenance;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.FloatBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -74,6 +78,17 @@ public abstract class AbstractFMModel<T extends Output<T>> extends AbstractSGDMo
         super(name, provenance, featureIDMap, outputIDInfo, parameters, generatesProbabilities, false);
     }
 
+    /**
+     * Gets the top {@code n} features for each output dimension.
+     * <p>
+     * Note that the feature rankings are based only off the linear portion of the
+     * factorization machine.
+     * @param n The number of features to return. If this value is less than 0,
+     * all features are returned for each class.
+     * @return A map from string outputs to an ordered list of pairs of
+     * feature names and weights associated with that feature in the factorization machine.
+     */
+    // TODO investigate using the factorized representation magnitude as an additional feature weight.
     @Override
     public Map<String, List<Pair<String, Double>>> getTopFeatures(int n) {
         DenseVector biases = (DenseVector) modelParameters.get()[0];
@@ -158,7 +173,7 @@ public abstract class AbstractFMModel<T extends Output<T>> extends AbstractSGDMo
      * Factorization machines don't provide excuses, use an explainer.
      *
      * @param example The input example.
-     * @return Optional.emtpy.
+     * @return Optional.empty.
      */
     @Override
     public Optional<Excuse<T>> getExcuse(Example<T> example) {
@@ -192,6 +207,14 @@ public abstract class AbstractFMModel<T extends Output<T>> extends AbstractSGDMo
         builder.setDocString(toString());
         builder.addOpsetImport(ONNXOperators.getOpsetProto());
         builder.setIrVersion(6);
+
+        // Extract provenance and store in metadata
+        OnnxMl.StringStringEntryProto.Builder metaBuilder = OnnxMl.StringStringEntryProto.newBuilder();
+        metaBuilder.setKey(ONNXExportable.PROVENANCE_METADATA_FIELD);
+        String serializedProvenance = ONNXExportable.SERIALIZER.marshalAndSerialize(getProvenance());
+        metaBuilder.setValue(serializedProvenance);
+        builder.addMetadataProps(metaBuilder.build());
+
         return builder.build();
     }
 
